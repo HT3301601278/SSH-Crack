@@ -17,7 +17,7 @@
 
 1. 克隆此仓库到本地：
     ```bash
-    git clone https://github.com/yourusername/ssh-brute-force-tool.git
+    git clone https://github.com/HT3301601278/SSH-crack.git
     cd ssh-brute-force-tool
     ```
 

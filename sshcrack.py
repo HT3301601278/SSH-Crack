@@ -406,7 +406,9 @@ if __name__ == '__main__':
                 exit(1)
             if mode in ['client', 'rsa', 'trans']:
                 print("[DEBUG] 3秒后开始爆破...")
-                time.sleep(3)
+                for i in range(3, 0, -1):
+                    print(f"[DEBUG] {i}...")
+                    time.sleep(1)
                 print("[DEBUG] 开始爆破")
                 modeDict[mode][0](hostname.strip(), SSHport)
             if mode == 'login':

